@@ -42,6 +42,8 @@ Original Author: Shay Gal-on
 #endif
 #if HAS_PRINTF
 #define ee_printf printf
+#else
+int ee_printf(const char *fmt, ...);
 #endif
 
 /* Actual benchmark execution in iterate */
@@ -54,7 +56,8 @@ void *iterate(void *pres);
 #if HAS_FLOAT
 typedef double secs_ret;
 #else
-typedef ee_u32 secs_ret;
+typedef long secs_ret;
+// typedef ee_u32 secs_ret;
 #endif
 
 #if MAIN_HAS_NORETURN
