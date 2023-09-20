@@ -882,6 +882,28 @@ static inline int write(int fd, const char * buf, int len)
   return status;
 }
 
+#ifdef DEBUGCON
+static inline void xxyy_debugcon_out_char(char c) {
+	*(volatile char*)(0x800000001fe002e0ull) = c;
+}
+
+static inline void xxyy_debugcon_out_str(const char * str) {
+	while (*str) {
+		xxyy_debugcon_out_char(*str++);
+	}
+}
+
+static inline void xxyy_debugcon_out_str_n(const char* str, int n){
+	register int i = 0;
+	for (; i < n; i++) {
+		xxyy_debugcon_out_char(str[i]);
+	}
+}
+
+#define XXYY_DUMP_CURRENT \
+	{xxyy_debugcon_out_str("xxyy:" __FILE__ ":" __stringify(__LINE__) ":");xxyy_debugcon_out_str((char*)__func__);xxyy_debugcon_out_str("\n");}
+#endif
+
 int
 ee_printf(const char *fmt, ...)
 {
@@ -892,8 +914,11 @@ ee_printf(const char *fmt, ...)
     va_start(args, fmt);
     n = ee_vsprintf(buf, fmt, args);
     va_end(args);
-
+#ifdef DEBUGCON
+    xxyy_debugcon_out_str_n(buf, n);
+#else
     write(1, buf, n);
+#endif
 
     return n;
 }
