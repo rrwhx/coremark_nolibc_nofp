@@ -750,6 +750,7 @@ uart_send_char(char c)
 
 #include <asm/unistd.h>
 
+#if defined(__x86_64__)
 
 #define my_syscall0(num)                                                      \
 ({                                                                            \
@@ -876,6 +877,199 @@ uart_send_char(char c)
 	_ret;                                                                 \
 })
 
+/* startup code */
+/*
+ * x86-64 System V ABI mandates:
+ * 1) %rsp must be 16-byte aligned right before the function call.
+ * 2) The deepest stack frame should be zero (the %rbp).
+ *
+ */
+void __attribute__((weak, noreturn, optimize("Os", "omit-frame-pointer"))) __attribute__((no_stack_protector)) _start(void)
+{
+#ifdef NO_STACK
+	__asm__ volatile (
+		"lea  __sstack + 0x8000 - 16, %rsp\n"       /* save stack pointer to %rdi, as arg1 of _start_c */
+		"and  $-16, %rsp\n"       /* %rsp must be 16-byte aligned before call        */
+		"xor  %ebp, %ebp\n"       /* zero the stack frame                            */
+		"call main\n"         /* transfer to c runtime                           */
+        "mov %eax, %edi\n"
+        "mov $60, %rax\n"
+        "syscall\n"
+		"hlt\n"                   /* ensure it does not return                       */
+	);
+#else
+	__asm__ volatile (
+		"xor  %ebp, %ebp\n"       /* zero the stack frame                            */
+		"mov  %rsp, %rdi\n"       /* save stack pointer to %rdi, as arg1 of _start_c */
+		"and  $-16, %rsp\n"       /* %rsp must be 16-byte aligned before call        */
+		"call _start_c\n"         /* transfer to c runtime                           */
+		"hlt\n"                   /* ensure it does not return                       */
+	);
+#endif
+	__builtin_unreachable();
+}
+
+#elif defined(__loongarch__)
+/* Syscalls for LoongArch :
+ *   - stack is 16-byte aligned
+ *   - syscall number is passed in a7
+ *   - arguments are in a0, a1, a2, a3, a4, a5
+ *   - the system call is performed by calling "syscall 0"
+ *   - syscall return comes in a0
+ *   - the arguments are cast to long and assigned into the target
+ *     registers which are then simply passed as registers to the asm code,
+ *     so that we don't have to experience issues with register constraints.
+ *
+ * On LoongArch, select() is not implemented so we have to use pselect6().
+ */
+#define __ARCH_WANT_SYS_PSELECT6
+#define _NOLIBC_SYSCALL_CLOBBERLIST \
+	"memory", "$t0", "$t1", "$t2", "$t3", "$t4", "$t5", "$t6", "$t7", "$t8"
+
+#define my_syscall0(num)                                                      \
+({                                                                            \
+	register long _num  __asm__ ("a7") = (num);                           \
+	register long _arg1 __asm__ ("a0");                                   \
+									      \
+	__asm__ volatile (                                                    \
+		"syscall 0\n"                                                 \
+		: "=r"(_arg1)                                                 \
+		: "r"(_num)                                                   \
+		: _NOLIBC_SYSCALL_CLOBBERLIST                                 \
+	);                                                                    \
+	_arg1;                                                                \
+})
+
+#define my_syscall1(num, arg1)                                                \
+({                                                                            \
+	register long _num  __asm__ ("a7") = (num);                           \
+	register long _arg1 __asm__ ("a0") = (long)(arg1);		      \
+									      \
+	__asm__ volatile (                                                    \
+		"syscall 0\n"                                                 \
+		: "+r"(_arg1)                                                 \
+		: "r"(_num)                                                   \
+		: _NOLIBC_SYSCALL_CLOBBERLIST                                 \
+	);                                                                    \
+	_arg1;                                                                \
+})
+
+#define my_syscall2(num, arg1, arg2)                                          \
+({                                                                            \
+	register long _num  __asm__ ("a7") = (num);                           \
+	register long _arg1 __asm__ ("a0") = (long)(arg1);                    \
+	register long _arg2 __asm__ ("a1") = (long)(arg2);                    \
+									      \
+	__asm__ volatile (                                                    \
+		"syscall 0\n"                                                 \
+		: "+r"(_arg1)                                                 \
+		: "r"(_arg2),                                                 \
+		  "r"(_num)                                                   \
+		: _NOLIBC_SYSCALL_CLOBBERLIST                                 \
+	);                                                                    \
+	_arg1;                                                                \
+})
+
+#define my_syscall3(num, arg1, arg2, arg3)                                    \
+({                                                                            \
+	register long _num  __asm__ ("a7") = (num);                           \
+	register long _arg1 __asm__ ("a0") = (long)(arg1);                    \
+	register long _arg2 __asm__ ("a1") = (long)(arg2);                    \
+	register long _arg3 __asm__ ("a2") = (long)(arg3);                    \
+									      \
+	__asm__ volatile (                                                    \
+		"syscall 0\n"                                                 \
+		: "+r"(_arg1)                                                 \
+		: "r"(_arg2), "r"(_arg3),                                     \
+		  "r"(_num)                                                   \
+		: _NOLIBC_SYSCALL_CLOBBERLIST                                 \
+	);                                                                    \
+	_arg1;                                                                \
+})
+
+#define my_syscall4(num, arg1, arg2, arg3, arg4)                              \
+({                                                                            \
+	register long _num  __asm__ ("a7") = (num);                           \
+	register long _arg1 __asm__ ("a0") = (long)(arg1);                    \
+	register long _arg2 __asm__ ("a1") = (long)(arg2);                    \
+	register long _arg3 __asm__ ("a2") = (long)(arg3);                    \
+	register long _arg4 __asm__ ("a3") = (long)(arg4);                    \
+									      \
+	__asm__ volatile (                                                    \
+		"syscall 0\n"                                                 \
+		: "+r"(_arg1)                                                 \
+		: "r"(_arg2), "r"(_arg3), "r"(_arg4),                         \
+		  "r"(_num)                                                   \
+		: _NOLIBC_SYSCALL_CLOBBERLIST                                 \
+	);                                                                    \
+	_arg1;                                                                \
+})
+
+#define my_syscall5(num, arg1, arg2, arg3, arg4, arg5)                        \
+({                                                                            \
+	register long _num  __asm__ ("a7") = (num);                           \
+	register long _arg1 __asm__ ("a0") = (long)(arg1);                    \
+	register long _arg2 __asm__ ("a1") = (long)(arg2);                    \
+	register long _arg3 __asm__ ("a2") = (long)(arg3);                    \
+	register long _arg4 __asm__ ("a3") = (long)(arg4);                    \
+	register long _arg5 __asm__ ("a4") = (long)(arg5);                    \
+									      \
+	__asm__ volatile (                                                    \
+		"syscall 0\n"                                                 \
+		: "+r"(_arg1)                                                 \
+		: "r"(_arg2), "r"(_arg3), "r"(_arg4), "r"(_arg5),             \
+		  "r"(_num)                                                   \
+		: _NOLIBC_SYSCALL_CLOBBERLIST                                 \
+	);                                                                    \
+	_arg1;                                                                \
+})
+
+#define my_syscall6(num, arg1, arg2, arg3, arg4, arg5, arg6)                  \
+({                                                                            \
+	register long _num  __asm__ ("a7") = (num);                           \
+	register long _arg1 __asm__ ("a0") = (long)(arg1);                    \
+	register long _arg2 __asm__ ("a1") = (long)(arg2);                    \
+	register long _arg3 __asm__ ("a2") = (long)(arg3);                    \
+	register long _arg4 __asm__ ("a3") = (long)(arg4);                    \
+	register long _arg5 __asm__ ("a4") = (long)(arg5);                    \
+	register long _arg6 __asm__ ("a5") = (long)(arg6);                    \
+									      \
+	__asm__ volatile (                                                    \
+		"syscall 0\n"                                                 \
+		: "+r"(_arg1)                                                 \
+		: "r"(_arg2), "r"(_arg3), "r"(_arg4), "r"(_arg5), "r"(_arg6), \
+		  "r"(_num)                                                   \
+		: _NOLIBC_SYSCALL_CLOBBERLIST                                 \
+	);                                                                    \
+	_arg1;                                                                \
+})
+
+#if __loongarch_grlen == 32
+#define LONG_BSTRINS "bstrins.w"
+#else /* __loongarch_grlen == 64 */
+#define LONG_BSTRINS "bstrins.d"
+#endif
+
+/* startup code */
+void __attribute__((weak, noreturn, optimize("Os", "omit-frame-pointer"))) __attribute__((no_stack_protector)) _start(void)
+{
+	__asm__ volatile (
+		"move          $a0, $sp\n"         /* save stack pointer to $a0, as arg1 of _start_c */
+		LONG_BSTRINS " $sp, $zero, 3, 0\n" /* $sp must be 16-byte aligned                    */
+		"bl            _start_c\n"         /* transfer to c runtime                          */
+	);
+	__builtin_unreachable();
+}
+
+#endif
+#ifdef NO_STACK
+	__asm__ (
+        ".data \n"
+        ".balign 16 \n"
+        "__sstack: \n"
+        ".zero 0x8000 \n"
+    );
+#endif
 static inline int write(int fd, const char * buf, int len)
 {
   int status = my_syscall3(__NR_write, fd, buf, len);
@@ -990,46 +1184,7 @@ void _start_c(long *sp)
 	exit(_nolibc_main(argc, argv, envp));
 }
 
-/* startup code */
-/*
- * x86-64 System V ABI mandates:
- * 1) %rsp must be 16-byte aligned right before the function call.
- * 2) The deepest stack frame should be zero (the %rbp).
- *
- */
-void __attribute__((weak, noreturn, optimize("Os", "omit-frame-pointer"))) __attribute__((no_stack_protector)) _start(void)
-{
-#ifdef NO_STACK
-	__asm__ volatile (
-		"lea  __sstack + 0x8000 - 16, %rsp\n"       /* save stack pointer to %rdi, as arg1 of _start_c */
-		"and  $-16, %rsp\n"       /* %rsp must be 16-byte aligned before call        */
-		"xor  %ebp, %ebp\n"       /* zero the stack frame                            */
-		"call main\n"         /* transfer to c runtime                           */
-        "mov %eax, %edi\n"
-        "mov $60, %rax\n"
-        "syscall\n"
-		"hlt\n"                   /* ensure it does not return                       */
-	);
-#else
-	__asm__ volatile (
-		"xor  %ebp, %ebp\n"       /* zero the stack frame                            */
-		"mov  %rsp, %rdi\n"       /* save stack pointer to %rdi, as arg1 of _start_c */
-		"and  $-16, %rsp\n"       /* %rsp must be 16-byte aligned before call        */
-		"call _start_c\n"         /* transfer to c runtime                           */
-		"hlt\n"                   /* ensure it does not return                       */
-	);
-#endif
-	__builtin_unreachable();
-}
-#ifdef NO_STACK
-	__asm__ (
-        ".data \n"
-        ".balign 16 \n"
-        "__sstack: \n"
-        ".zero 0x8000 \n"
-    );
-#endif
-
+#if defined(__x86_64__)
 #include <x86intrin.h>
 
 //12700k
@@ -1038,6 +1193,78 @@ static inline long long get_tsc(void) {
     unsigned int temp;
     return __rdtscp(&temp);
 }
+
+static inline long long
+__attribute__((always_inline))
+get_cycle(void) {
+    return (long long)(get_tsc() * 1.38888888888888888888);
+}
+
+#elif defined(__loongarch__)
+#include <larchintrin.h>
+// 3a5000
+#define TSC_HZ 100000000
+static inline long long get_tsc(void) {
+    long long r;
+    asm volatile(
+    "rdtime.d %0, $r0 \n\t"
+    :"=r"(r)
+    :
+    :"memory"
+    );
+    return r;
+}
+
+static inline long long
+__attribute__((always_inline))
+get_cycle(void) {
+
+    return get_tsc() * 25;
+}
+
+#elif defined(__riscv)
+// d1 c906
+#define TSC_HZ 24000000
+static inline long long get_tsc(void) {
+    long long r;
+    asm volatile(
+    "rdtime %0 \n\t"
+    :"=r"(r)
+    :
+    :"memory"
+    );
+    return r;
+}
+
+static inline long long
+__attribute__((always_inline))
+get_cycle(void) {
+    long long r;
+    asm volatile(
+    "rdcycle %0 \n\t"
+    :"=r"(r)
+    :
+    :"memory"
+    );
+    return r;
+}
+
+static inline long long
+__attribute__((always_inline))
+get_instret(void) {
+    long long r;
+    asm volatile(
+    "rdinstret %0 \n\t"
+    :"=r"(r)
+    :
+    :"memory"
+    );
+    return r;
+}
+
+#else
+    #warning "no intrin.h support"
+#endif
 
 int clock_gettime(clockid_t clockid, struct timespec *tp) {
     // my_syscall2(__NR_clock_gettime, clockid, tp);
